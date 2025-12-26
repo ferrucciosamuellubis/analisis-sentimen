@@ -1,7 +1,6 @@
 import streamlit as st
 import gensim
 from gensim import corpora
-from transformers import pipeline
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import pickle
@@ -149,9 +148,18 @@ def load_all_models():
     lda_model = gensim.models.LdaMulticore.load("lda_model.gensim")
     dictionary = corpora.Dictionary.load("lda_dictionary.gensim")
 
-    # IndoBERT Sentiment Pipeline
-    sentiment_model_dir = "indobert_sentiment_model"
-    indobert_sentiment_pipeline = pipeline("sentiment-analysis", model=sentiment_model_dir)
+    # IndoBERT Sentiment Pipeline (Hugging Face)
+HF_MODEL_ID = "mdhugol/indonesia-bert-sentiment-classification"  # 3-class: LABEL_0/1/2
+try:
+    indobert_sentiment_pipeline = pipeline(
+        "sentiment-analysis",
+        model=HF_MODEL_ID,
+        tokenizer=HF_MODEL_ID,
+    )
+except Exception as e:
+    indobert_sentiment_pipeline = None
+    st.warning(f"Gagal load IndoBERT dari Hugging Face. IndoBERT dimatikan. Detail: {e}")
+
 
     # LSTM Topic Classification Model
     lstm_topic_model = load_model("lstm_topic_model.h5")
@@ -212,10 +220,26 @@ def predict_topic_lstm(preprocessed_text_lda: str):
 def predict_sentiment_indobert(cleaned_text: str):
     if not cleaned_text.strip():
         return "neutral"
+    if indobert_sentiment_pipeline_loaded is None:
+        return "neutral"
+
     sentiment_result = indobert_sentiment_pipeline_loaded(cleaned_text)[0]
-    label_index = {'LABEL_0': 'positive', 'LABEL_1': 'neutral', 'LABEL_2': 'negative'}
-    sentiment_category = label_index[sentiment_result['label']]
-    return sentiment_category
+    label = sentiment_result.get("label", "")
+
+    # mapping umum untuk model 3 kelas (LABEL_0/1/2)
+    label_index = {"LABEL_0": "positive", "LABEL_1": "neutral", "LABEL_2": "negative"}
+
+    # kalau labelnya bukan LABEL_0/1/2, pakai fallback berbasis kata
+    if label in label_index:
+        return label_index[label]
+
+    low = label.lower()
+    if "pos" in low:
+        return "positive"
+    if "neg" in low:
+        return "negative"
+    return "neutral"
+
 
 def predict_sentiment_lstm(preprocessed_text_lda: str):
     if not preprocessed_text_lda.strip():
@@ -261,9 +285,12 @@ if st.button('Analisis Ulasan'):
         if not indobert_ready_text.strip():
             st.warning("Ulasan setelah preprocessing untuk IndoBERT menjadi kosong. Tidak dapat menganalisis sentimen dengan IndoBERT.")
         else:
-            # IndoBERT Sentiment Prediction
-            indobert_sentiment = predict_sentiment_indobert(indobert_ready_text)
-            st.write(f"**IndoBERT Sentimen:** {indobert_sentiment}")
+           if indobert_sentiment_pipeline_loaded is None:
+    st.info("IndoBERT dari Hugging Face tidak tersedia (gagal load / dibatasi jaringan). Menampilkan hasil LSTM saja.")
+else:
+    indobert_sentiment = predict_sentiment_indobert(indobert_ready_text)
+    st.write(f"**IndoBERT Sentimen:** {indobert_sentiment}")
+
 
     else:
         st.warning('Silakan masukkan ulasan terlebih dahulu.')
