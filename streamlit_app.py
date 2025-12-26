@@ -285,9 +285,14 @@ if st.button('Analisis Ulasan'):
         if not indobert_ready_text.strip():
             st.warning("Ulasan setelah preprocessing untuk IndoBERT menjadi kosong. Tidak dapat menganalisis sentimen dengan IndoBERT.")
         else:
-           if indobert_sentiment_pipeline_loaded is None:
-    st.info("IndoBERT dari Hugging Face tidak tersedia (gagal load / dibatasi jaringan). Menampilkan hasil LSTM saja.")
-else:
+       # IndoBERT Sentiment Prediction
+        if indobert_sentiment_pipeline_loaded is None:
+        st.info(
+        "IndoBERT dari Hugging Face tidak tersedia "
+        "(gagal load / dibatasi jaringan). "
+        "Menampilkan hasil LSTM saja."
+    )
+        else:
     indobert_sentiment = predict_sentiment_indobert(indobert_ready_text)
     st.write(f"**IndoBERT Sentimen:** {indobert_sentiment}")
 
