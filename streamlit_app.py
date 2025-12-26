@@ -14,11 +14,29 @@ from nltk import downloader # Added this line
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
-# Ensure NLTK data is downloaded
+# Ensure NLTK data is downloaded (Streamlit Cloud-safe)
+NLTK_DIR = "/tmp/nltk_data"
+os.makedirs(NLTK_DIR, exist_ok=True)
+if NLTK_DIR not in nltk.data.path:
+    nltk.data.path.append(NLTK_DIR)
+
 try:
-    nltk.data.find('tokenizers/punkt')
-except downloader.DownloadError: # Modified this line
-    nltk.download('punkt')
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    # quiet=True biar log tidak berisik; raise_on_error=False biar tidak crash jika jaringan dibatasi
+    nltk.download("punkt", download_dir=NLTK_DIR, quiet=True, raise_on_error=False)
+
+    # cek lagi; kalau tetap tidak ada, kasih pesan yang jelas
+    try:
+        nltk.data.find("tokenizers/punkt")
+    except LookupError as e:
+        st.error(
+            "NLTK resource 'punkt' belum tersedia dan gagal diunduh pada environment deploy. "
+            "Coba redeploy atau pastikan download NLTK diizinkan. "
+            f"Detail: {e}"
+        )
+        st.stop()
+
 
 # =============================================================================
 # 1. Global Variables Re-definition (from notebook)
