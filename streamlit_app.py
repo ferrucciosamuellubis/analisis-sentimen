@@ -24,7 +24,7 @@ except LookupError:
     nltk.download('punkt')
 
 # =============================================================================
-# 2. Preprocessing Resources (Stopwords, Stemmer, Normalization)
+# 2. Preprocessing Resources
 # =============================================================================
 
 # --- Stopwords ---
@@ -174,39 +174,20 @@ def analyze_review(text):
     results['lda_topic'] = topic_name_map.get(dominant_topic_id, "Unknown")
 
     # 3. LSTM Topic Prediction
-    seq_topic = tokenizer_topic.texts_to_sequences([lda_text])
+    seq_topic = tokenizer_topic.texts_to_sequences([clean_text]) # Use cleaned_text as per training
     pad_topic = pad_sequences(seq_topic, maxlen=MAXLEN, padding='post', truncating='post')
     pred_topic = lstm_topic_model.predict(pad_topic)
     topic_idx = np.argmax(pred_topic)
     results['lstm_topic'] = label_encoder_topic.inverse_transform([topic_idx])[0]
 
     # 4. IndoBERT Sentiment
-    # IndoBERT typically expects slightly cleaner text but not necessarily stemmed
-    # We used cleaned_content for IndoBERT in the notebook
     sent_bert = indobert_pipeline(clean_text)[0]
     label_map = {'LABEL_0': 'positive', 'LABEL_1': 'neutral', 'LABEL_2': 'negative'}
     results['indobert_sentiment'] = label_map.get(sent_bert['label'], sent_bert['label'])
     results['indobert_score'] = sent_bert['score']
 
     # 5. LSTM Sentiment Prediction
-    seq_sent = tokenizer_sentiment.texts_to_sequences([lda_text]) # Trained on cleaned_content ?? No, trained on cleaned_content but let's check notebook.
-    # Notebook checked: df_lstm_sentiment['cleaned_content'] was used.
-    # Wait, in the notebook for LSTM Sentiment: tokenizer_sentiment.fit_on_texts(df_lstm_sentiment['cleaned_content'])
-    # So we should use `clean_text` for LSTM Sentiment, NOT `lda_text`.
-    
-    # Re-checking LSTM Topic: tokenizer.fit_on_texts(df_lstm['cleaned_content'])
-    # Notebook check: df_lstm = df.dropna... tokenizer.fit_on_texts(df_lstm['cleaned_content'])
-    # So BOTH LSTMs use `cleaned_content` (clean_text), NOT `cleaned_content_lda` (lda_text).
-    # Correction: The code above for LSTM Topic used `lda_text`. I must correct it to use `clean_text`.
-    
-    # Correcting LSTM inputs to use `clean_text`
-    seq_topic = tokenizer_topic.texts_to_sequences([clean_text])
-    pad_topic = pad_sequences(seq_topic, maxlen=MAXLEN, padding='post', truncating='post')
-    pred_topic = lstm_topic_model.predict(pad_topic)
-    topic_idx = np.argmax(pred_topic)
-    results['lstm_topic'] = label_encoder_topic.inverse_transform([topic_idx])[0]
-    
-    seq_sent = tokenizer_sentiment.texts_to_sequences([clean_text])
+    seq_sent = tokenizer_sentiment.texts_to_sequences([clean_text]) # Use cleaned_text
     pad_sent = pad_sequences(seq_sent, maxlen=MAXLEN, padding='post', truncating='post')
     pred_sent = lstm_sentiment_model.predict(pad_sent)
     sent_idx = np.argmax(pred_sent)
