@@ -13,3 +13,4 @@ streamlit==1.36.0
 transformers
 torch
 sentencepiece
+tf-keras
