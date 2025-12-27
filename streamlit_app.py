@@ -90,7 +90,7 @@ def preprocess_text(text: str) -> str:
     text = text.lower()
     for slang, standard in normalization_dict.items():
         text = re.sub(rf"\b{re.escape(slang.lower())}\b", standard.lower(), text)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()  # <-- INI YANG BENAR
     return text
 
 def preprocess_text_lda(text: str) -> str:
