@@ -1,7 +1,7 @@
 import streamlit as st
 import gensim
 from gensim import corpora
-from transformers import pipeline  # <-- WAJIB untuk Hugging Face pipeline
+from transformers import pipeline
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import pickle
@@ -14,38 +14,26 @@ from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
 # =============================================================================
-# Ensure NLTK data is downloaded (Streamlit Cloud-safe)
+# 1. Setup & Configuration
 # =============================================================================
-NLTK_DIR = "/tmp/nltk_data"
-os.makedirs(NLTK_DIR, exist_ok=True)
-if NLTK_DIR not in nltk.data.path:
-    nltk.data.path.append(NLTK_DIR)
 
+# Download necessary NLTK data
 try:
-    nltk.data.find("tokenizers/punkt")
+    nltk.data.find('tokenizers/punkt')
 except LookupError:
-    nltk.download("punkt", download_dir=NLTK_DIR, quiet=True, raise_on_error=False)
-    try:
-        nltk.data.find("tokenizers/punkt")
-    except LookupError as e:
-        st.error(
-            "NLTK resource 'punkt' belum tersedia dan gagal diunduh pada environment deploy. "
-            "Coba redeploy atau pastikan download NLTK diizinkan. "
-            f"Detail: {e}"
-        )
-        st.stop()
+    nltk.download('punkt')
 
 # =============================================================================
-# 1. Global Variables
+# 2. Preprocessing Resources (Stopwords, Stemmer, Normalization)
 # =============================================================================
+
+# --- Stopwords ---
 STOPWORD_PATH = "stopwordbahasa.txt"
-
 additional_stopwords = []
 if os.path.exists(STOPWORD_PATH):
     with open(STOPWORD_PATH, "r", encoding="utf-8") as f:
-        additional_stopwords = [line.strip() for line in f if line.strip()]
-else:
-    st.warning(f"Warning: {STOPWORD_PATH} not found. Continuing without additional stopwords.")
+        additional_stopwords = [line.strip() for line in f.readlines()]
+    additional_stopwords = [sw for sw in additional_stopwords if sw]
 
 stop_factory = StopWordRemoverFactory()
 more_stopword = ['dengan', 'ia', 'bahwa', 'oleh', 'nya', 'dana']
@@ -54,9 +42,11 @@ stop_words = set(stop_factory.get_stop_words())
 stop_words.update(more_stopword)
 stop_words.update(additional_stopwords)
 
+# --- Stemmer ---
 stemmer_factory = StemmerFactory()
 stemmer = stemmer_factory.create_stemmer()
 
+# --- Normalization Dictionary ---
 normalization_dict = {
     'ae': 'saja','aja': 'saja','ajah': 'saja','aj': 'saja','jha': 'saja','sj': 'saja',
     'g': 'tidak','ga': 'tidak','gak': 'tidak','gk': 'tidak','kaga': 'tidak','kagak': 'tidak',
@@ -82,7 +72,7 @@ normalization_dict = {
 }
 
 # =============================================================================
-# 2. Preprocessing
+# 3. Preprocessing Functions
 # =============================================================================
 def normalize_repeated_characters(text: str) -> str:
     return re.sub(r"(.)\1{2,}", r"\1", text)
@@ -103,173 +93,166 @@ def preprocess_text(text: str) -> str:
     return text
 
 def preprocess_text_lda(text: str) -> str:
+    # stemming
     text = stemmer.stem(text)
-    tokens = nltk.tokenize.word_tokenize(text)
+    # tokenize
+    tokens = nltk.word_tokenize(text)
+    # remove stopwords + tokens pendek
     tokens = [t for t in tokens if t not in stop_words and len(t) > 2]
     return " ".join(tokens)
 
-def preprocess_single_text(text: str) -> str:
-    cleaned_text = preprocess_text(text)
-    return preprocess_text_lda(cleaned_text)
+# =============================================================================
+# 4. Load Models & Artifacts
+# =============================================================================
+@st.cache_resource
+def load_models():
+    # --- LDA ---
+    # Assuming lda_model.gensim matches the 4-topic model saved previously
+    lda_model = gensim.models.LdaMulticore.load("lda_model.gensim")
+    dictionary = corpora.Dictionary.load("lda_dictionary.gensim")
 
-# =============================================================================
-# 3. Topic Name Maps
-# =============================================================================
-topic_name_map_lda = {
+    # --- IndoBERT Sentiment ---
+    sentiment_model_dir = "indobert_sentiment_model"
+    indobert_pipeline = pipeline("sentiment-analysis", model=sentiment_model_dir)
+
+    # --- LSTM Topic ---
+    lstm_topic_model = load_model("lstm_topic_model.h5")
+    with open('tokenizer_topic.pkl', 'rb') as f:
+        tokenizer_topic = pickle.load(f)
+    with open('label_encoder_topic.pkl', 'rb') as f:
+        label_encoder_topic = pickle.load(f)
+
+    # --- LSTM Sentiment ---
+    lstm_sentiment_model = load_model("lstm_sentiment_model.h5")
+    with open('tokenizer_sentiment.pkl', 'rb') as f:
+        tokenizer_sentiment = pickle.load(f)
+    with open('label_encoder_sentiment.pkl', 'rb') as f:
+        label_encoder_sentiment = pickle.load(f)
+
+    return (
+        lda_model, dictionary, indobert_pipeline,
+        lstm_topic_model, tokenizer_topic, label_encoder_topic,
+        lstm_sentiment_model, tokenizer_sentiment, label_encoder_sentiment
+    )
+
+(lda_model, dictionary, indobert_pipeline,
+ lstm_topic_model, tokenizer_topic, label_encoder_topic,
+ lstm_sentiment_model, tokenizer_sentiment, label_encoder_sentiment) = load_models()
+
+# Mappings
+topic_name_map = {
     0: "Kemudahan Pengurusan SKCK & Manfaat Aplikasi Polri",
     1: "Efisiensi Pendaftaran Online & Bantuan",
     2: "Isu Teknis, Error & Kendala Penggunaan Aplikasi",
     3: "Kepuasan Layanan Aplikasi & Akses Cepat"
 }
 
-# =============================================================================
-# 4. Load Models
-# =============================================================================
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
-@st.cache_resource
-def load_all_models():
-    # LDA
-    lda_model = gensim.models.LdaMulticore.load("lda_model.gensim")
-    dictionary = corpora.Dictionary.load("lda_dictionary.gensim")
-
-    # IndoBERT Sentiment (Hugging Face)
-    HF_MODEL_ID = "mdhugol/indonesia-bert-sentiment-classification"
-    try:
-        indobert_sentiment_pipeline = pipeline(
-            "sentiment-analysis",
-            model=HF_MODEL_ID,
-            tokenizer=HF_MODEL_ID,
-        )
-    except Exception as e:
-        indobert_sentiment_pipeline = None
-        st.warning(f"Gagal load IndoBERT dari Hugging Face. IndoBERT dimatikan. Detail: {e}")
-
-    # LSTM Topic
-    lstm_topic_model = load_model("lstm_topic_model.h5")
-    with open("tokenizer_topic.pkl", "rb") as handle:
-        tokenizer_topic = pickle.load(handle)
-    with open("label_encoder_topic.pkl", "rb") as handle:
-        label_encoder_topic = pickle.load(handle)
-
-    # LSTM Sentiment
-    lstm_sentiment_model = load_model("lstm_sentiment_model.h5")
-    with open("tokenizer_sentiment.pkl", "rb") as handle:
-        tokenizer_sentiment = pickle.load(handle)
-    with open("label_encoder_sentiment.pkl", "rb") as handle:
-        label_encoder_sentiment = pickle.load(handle)
-
-    return (
-        lda_model, dictionary,
-        indobert_sentiment_pipeline,
-        lstm_topic_model, tokenizer_topic, label_encoder_topic,
-        lstm_sentiment_model, tokenizer_sentiment, label_encoder_sentiment
-    )
-
-(lda_model_loaded, dictionary_loaded,
- indobert_sentiment_pipeline_loaded,
- lstm_topic_model_loaded, tokenizer_topic_loaded, label_encoder_topic_loaded,
- lstm_sentiment_model_loaded, tokenizer_sentiment_loaded, label_encoder_sentiment_loaded) = load_all_models()
+# Maxlen for LSTM (must match training)
+MAXLEN = 20
 
 # =============================================================================
-# 5. Maxlen
+# 5. Prediction Logic
 # =============================================================================
-maxlen = 20
-maxlen_sentiment = 20
+
+def analyze_review(text):
+    results = {}
+
+    # 1. Preprocessing
+    clean_text = preprocess_text(text)
+    lda_text = preprocess_text_lda(clean_text)
+
+    results['cleaned_text'] = clean_text
+    results['lda_text'] = lda_text
+
+    if not lda_text.strip():
+        return None
+
+    # 2. LDA Prediction
+    bow = dictionary.doc2bow(lda_text.split())
+    topics = lda_model.get_document_topics(bow)
+    dominant_topic_id = max(topics, key=lambda x: x[1])[0]
+    results['lda_topic'] = topic_name_map.get(dominant_topic_id, "Unknown")
+
+    # 3. LSTM Topic Prediction
+    seq_topic = tokenizer_topic.texts_to_sequences([lda_text])
+    pad_topic = pad_sequences(seq_topic, maxlen=MAXLEN, padding='post', truncating='post')
+    pred_topic = lstm_topic_model.predict(pad_topic)
+    topic_idx = np.argmax(pred_topic)
+    results['lstm_topic'] = label_encoder_topic.inverse_transform([topic_idx])[0]
+
+    # 4. IndoBERT Sentiment
+    # IndoBERT typically expects slightly cleaner text but not necessarily stemmed
+    # We used cleaned_content for IndoBERT in the notebook
+    sent_bert = indobert_pipeline(clean_text)[0]
+    label_map = {'LABEL_0': 'positive', 'LABEL_1': 'neutral', 'LABEL_2': 'negative'}
+    results['indobert_sentiment'] = label_map.get(sent_bert['label'], sent_bert['label'])
+    results['indobert_score'] = sent_bert['score']
+
+    # 5. LSTM Sentiment Prediction
+    seq_sent = tokenizer_sentiment.texts_to_sequences([lda_text]) # Trained on cleaned_content ?? No, trained on cleaned_content but let's check notebook.
+    # Notebook checked: df_lstm_sentiment['cleaned_content'] was used.
+    # Wait, in the notebook for LSTM Sentiment: tokenizer_sentiment.fit_on_texts(df_lstm_sentiment['cleaned_content'])
+    # So we should use `clean_text` for LSTM Sentiment, NOT `lda_text`.
+    
+    # Re-checking LSTM Topic: tokenizer.fit_on_texts(df_lstm['cleaned_content'])
+    # Notebook check: df_lstm = df.dropna... tokenizer.fit_on_texts(df_lstm['cleaned_content'])
+    # So BOTH LSTMs use `cleaned_content` (clean_text), NOT `cleaned_content_lda` (lda_text).
+    # Correction: The code above for LSTM Topic used `lda_text`. I must correct it to use `clean_text`.
+    
+    # Correcting LSTM inputs to use `clean_text`
+    seq_topic = tokenizer_topic.texts_to_sequences([clean_text])
+    pad_topic = pad_sequences(seq_topic, maxlen=MAXLEN, padding='post', truncating='post')
+    pred_topic = lstm_topic_model.predict(pad_topic)
+    topic_idx = np.argmax(pred_topic)
+    results['lstm_topic'] = label_encoder_topic.inverse_transform([topic_idx])[0]
+    
+    seq_sent = tokenizer_sentiment.texts_to_sequences([clean_text])
+    pad_sent = pad_sequences(seq_sent, maxlen=MAXLEN, padding='post', truncating='post')
+    pred_sent = lstm_sentiment_model.predict(pad_sent)
+    sent_idx = np.argmax(pred_sent)
+    results['lstm_sentiment'] = label_encoder_sentiment.inverse_transform([sent_idx])[0]
+
+    return results
 
 # =============================================================================
-# 6. Prediction
+# 6. Streamlit UI
 # =============================================================================
-def predict_topic_lda(preprocessed_text_lda: str):
-    if not preprocessed_text_lda.strip():
-        return -1, "No content to classify"
-    bow = dictionary_loaded.doc2bow(preprocessed_text_lda.split())
-    topic_distribution = lda_model_loaded.get_document_topics(bow)
-    if not topic_distribution:
-        return -1, "No topic found"
-    dominant_topic_id = max(topic_distribution, key=lambda x: x[1])[0]
-    dominant_topic_name = topic_name_map_lda.get(dominant_topic_id, "Unknown Topic")
-    return dominant_topic_id, dominant_topic_name
+st.title("🔍 Analisis Ulasan Aplikasi Polri Presisi")
+st.markdown("""
+Demo ini menggunakan hasil training model:
+- **LDA** (Topic Modeling)
+- **LSTM** (Topic & Sentiment Classification)
+- **IndoBERT** (Sentiment Analysis)
+""")
 
-def predict_topic_lstm(preprocessed_text_lda: str):
-    if not preprocessed_text_lda.strip():
-        return -1, "No content to classify"
-    sequence = tokenizer_topic_loaded.texts_to_sequences([preprocessed_text_lda])
-    padded_sequence = pad_sequences(sequence, maxlen=maxlen, padding='post', truncating='post')
-    predictions = lstm_topic_model_loaded.predict(padded_sequence, verbose=0)[0]
-    dominant_topic_id = int(np.argmax(predictions))
-    dominant_topic_name = label_encoder_topic_loaded.inverse_transform([dominant_topic_id])[0]
-    return dominant_topic_id, dominant_topic_name
+input_text = st.text_area("Masukkan Ulasan Pengguna:", height=150)
 
-def predict_sentiment_lstm(preprocessed_text_lda: str):
-    if not preprocessed_text_lda.strip():
-        return "neutral"
-    sequence = tokenizer_sentiment_loaded.texts_to_sequences([preprocessed_text_lda])
-    padded_sequence = pad_sequences(sequence, maxlen=maxlen_sentiment, padding='post', truncating='post')
-    predictions = lstm_sentiment_model_loaded.predict(padded_sequence, verbose=0)[0]
-    dominant_sentiment_id = int(np.argmax(predictions))
-    dominant_sentiment_name = label_encoder_sentiment_loaded.inverse_transform([dominant_sentiment_id])[0]
-    return dominant_sentiment_name
+if st.button("Analisis"):
+    if input_text:
+        with st.spinner('Sedang memproses...'):
+            res = analyze_review(input_text)
+        
+        if res:
+            st.success("Selesai!")
+            
+            # Display Cleaned Data
+            with st.expander("Lihat Hasil Preprocessing"):
+                st.write("**Original:**", input_text)
+                st.write("**Cleaned:**", res['cleaned_text'])
+                st.write("**LDA Input (Stemmed):**", res['lda_text'])
 
-def predict_sentiment_indobert(cleaned_text: str):
-    if not cleaned_text.strip():
-        return "neutral"
-    if indobert_sentiment_pipeline_loaded is None:
-        return "neutral"
-
-    sentiment_result = indobert_sentiment_pipeline_loaded(cleaned_text)[0]
-    label = sentiment_result.get("label", "")
-
-    label_index = {"LABEL_0": "positive", "LABEL_1": "neutral", "LABEL_2": "negative"}
-    if label in label_index:
-        return label_index[label]
-
-    low = label.lower()
-    if "pos" in low:
-        return "positive"
-    if "neg" in low:
-        return "negative"
-    return "neutral"
-
-# =============================================================================
-# Streamlit UI
-# =============================================================================
-st.title("Aplikasi Analisis Sentimen dan Topik Ulasan Pengguna")
-st.write("Masukkan ulasan pengguna aplikasi Polri Presisi untuk menganalisis topik dan sentimennya.")
-
-user_input = st.text_area("Masukkan ulasan Anda di sini:", "")
-
-if st.button("Analisis Ulasan"):
-    if user_input:
-        lda_ready_text = preprocess_single_text(user_input)
-        indobert_ready_text = preprocess_text(user_input)
-
-        st.subheader("Hasil Analisis:")
-
-        if not lda_ready_text.strip():
-            st.warning("Ulasan setelah preprocessing menjadi kosong. Tidak dapat menganalisis topik dan LSTM sentimen.")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("📌 Analisis Topik")
+                st.info(f"**LDA:** {res['lda_topic']}")
+                st.info(f"**LSTM:** {res['lstm_topic']}")
+            
+            with col2:
+                st.subheader("😊 Analisis Sentimen")
+                st.success(f"**IndoBERT:** {res['indobert_sentiment']} (Conf: {res['indobert_score']:.4f})")
+                st.success(f"**LSTM:** {res['lstm_sentiment']}")
         else:
-            lda_topic_id, lda_topic_name = predict_topic_lda(lda_ready_text)
-            st.write(f"**LDA (Latent Dirichlet Allocation) Topik:** {lda_topic_name} (ID: {lda_topic_id})")
-
-            lstm_topic_id, lstm_topic_name = predict_topic_lstm(lda_ready_text)
-            st.write(f"**LSTM (Bidirectional LSTM) Topik:** {lstm_topic_name} (ID: {lstm_topic_id})")
-
-            lstm_sentiment = predict_sentiment_lstm(lda_ready_text)
-            st.write(f"**LSTM (Bidirectional LSTM) Sentimen:** {lstm_sentiment}")
-
-        if not indobert_ready_text.strip():
-            st.warning("Ulasan setelah preprocessing untuk IndoBERT menjadi kosong. Tidak dapat menganalisis sentimen dengan IndoBERT.")
-        else:
-            # IndoBERT Sentiment Prediction (aman dari error)
-            if indobert_sentiment_pipeline_loaded is None:
-                st.info(
-                    "IndoBERT dari Hugging Face tidak tersedia "
-                    "(gagal load / dibatasi jaringan). "
-                    "Menampilkan hasil LSTM saja."
-                )
-            else:
-                indobert_sentiment = predict_sentiment_indobert(indobert_ready_text)
-                st.write(f"**IndoBERT Sentimen:** {indobert_sentiment}")
+            st.warning("Teks tidak valid atau kosong setelah preprocessing.")
     else:
-        st.warning("Silakan masukkan ulasan terlebih dahulu.")
+        st.warning("Silakan masukkan teks ulasan terlebih dahulu.")
