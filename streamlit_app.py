@@ -90,7 +90,7 @@ def preprocess_text(text: str) -> str:
     text = text.lower()
     for slang, standard in normalization_dict.items():
         text = re.sub(rf"\b{re.escape(slang.lower())}\b", standard.lower(), text)
-    text = re.sub(r"\s+", " ").strip()
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 def preprocess_text_lda(text: str) -> str:
@@ -113,14 +113,14 @@ def load_models():
     dictionary = corpora.Dictionary.load("lda_dictionary.gensim")
 
     # --- IndoBERT Sentiment ---
-    HF_MODEL_ID = "mdhugol/indonesia-bert-sentiment-classification"
+   HF_MODEL_ID = "mdhugol/indonesia-bert-sentiment-classification"
 try:
     indobert_sentiment_pipeline = pipeline(
         "sentiment-analysis",
         model=HF_MODEL_ID,
         tokenizer=HF_MODEL_ID,
-        framework="pt",   # <-- paksa PyTorch (biar tidak nyentuh Keras)
-        device=-1         # CPU
+        framework="pt",     # paksa PyTorch
+        device=-1           # CPU
     )
 except Exception as e:
     indobert_sentiment_pipeline = None
