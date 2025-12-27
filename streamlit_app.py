@@ -9,6 +9,7 @@ import os
 import numpy as np
 import re
 import emoji
+import torch
 import nltk
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
@@ -112,8 +113,18 @@ def load_models():
     dictionary = corpora.Dictionary.load("lda_dictionary.gensim")
 
     # --- IndoBERT Sentiment ---
-    sentiment_model_dir = "indobert_sentiment_model"
-    indobert_pipeline = pipeline("sentiment-analysis", model=sentiment_model_dir)
+    HF_MODEL_ID = "mdhugol/indonesia-bert-sentiment-classification"
+try:
+    indobert_sentiment_pipeline = pipeline(
+        "sentiment-analysis",
+        model=HF_MODEL_ID,
+        tokenizer=HF_MODEL_ID,
+        framework="pt",   # <-- paksa PyTorch (biar tidak nyentuh Keras)
+        device=-1         # CPU
+    )
+except Exception as e:
+    indobert_sentiment_pipeline = None
+    st.warning(f"Gagal load IndoBERT dari Hugging Face. IndoBERT dimatikan. Detail: {e}")
 
     # --- LSTM Topic ---
     lstm_topic_model = load_model("lstm_topic_model.h5")
